@@ -15,14 +15,14 @@ inductive Error
 | divByZero
 | typeMismatch
 | cyclic
-deriving Repr
+deriving Repr, BEq
 
 inductive Atomic
 | number : Float -> Atomic
 | string : String -> Atomic
 | none : Atomic
 | error : Error -> Atomic
-deriving Repr
+deriving Repr, BEq
 
 inductive Expr
 | atom : Atomic -> Expr
@@ -31,7 +31,7 @@ inductive Expr
 | sub : Expr -> Expr -> Expr
 | mult : Expr -> Expr -> Expr
 | div : Expr -> Expr -> Expr
-deriving Repr
+deriving Repr, BEq
 
 instance : Zero Expr where
   zero := .atom (.string "")
@@ -79,14 +79,14 @@ def Atomic.binOp (f : Float -> Float -> Atomic) (a b : Atomic) : Atomic :=
     | .some x, .some y => f x y
     | _, _ => .error .typeMismatch
 
-def Atomic.add (a b : Atomic) : Atomic := a.binOp (fun x y => .number (x + y)) b
+def Atomic.add (a b : Atomic) : Atomic := a.binOp (λ x y => .number (x + y)) b
 
-def Atomic.sub (a b : Atomic) : Atomic := a.binOp (fun x y => .number (x - y)) b
+def Atomic.sub (a b : Atomic) : Atomic := a.binOp (λ x y => .number (x - y)) b
 
-def Atomic.mult (a b : Atomic) : Atomic := a.binOp (fun x y => .number (x * y)) b
+def Atomic.mult (a b : Atomic) : Atomic := a.binOp (λ x y => .number (x * y)) b
 
 def Atomic.div (a b : Atomic) : Atomic :=
-  a.binOp (fun x y => if y == 0 then .error .divByZero else .number (x / y)) b
+  a.binOp (λ x y => if y == 0 then .error .divByZero else .number (x / y)) b
 
 structure Context where
   vals : Std.TreeMap CellId Atomic
@@ -103,7 +103,7 @@ def Expr.evalWith (ctx : Context) : Expr -> Atomic
 def foo : Expr := .add (.ref ⟨2, 1⟩) (.mult (.ref ⟨2, 2⟩) (.atom $ .number 3.5))
 
 def Expr.isFree (ex : Expr) (ctx : Context) : Bool :=
-  ex.deps.all λ id => id ∈ ctx.vals
+  ex.deps.foldl (init := True) λ acc id => acc ∧ id ∈ ctx.vals
 
 structure Evaluation where
   ctx : Context
@@ -334,3 +334,126 @@ theorem Grid.evaluate_keys (grid : Grid) :
   exact h_dom
 
 #eval Grid.evaluate dummy
+
+deriving instance Repr for ByteArray
+
+structure ByteCursor where
+  data : ByteArray
+  pos  : Nat := 0
+deriving Repr
+
+abbrev Parser := StateT ByteCursor Option
+
+def readByte : Parser UInt8 := do
+  let c ← get
+  if h : c.pos < c.data.size then
+    set { c with pos := c.pos + 1 }
+    return c.data.get c.pos h
+  else
+    failure
+
+def readNat32 : Parser Nat := do
+  let bs ← Vector.replicate 4 0 |>.mapM (λ _ => readByte)
+  return bs[0].toNat 
+           ||| (bs[1].toNat <<< 8) 
+           ||| (bs[2].toNat <<< 16) 
+           ||| (bs[3].toNat <<< 24)
+
+example : (readNat32.run ⟨ByteArray.mk #[8, 2, 0, 0], 0⟩).map (·.1) = some 520 :=
+  by native_decide
+
+def readFloat64 : Parser Float := do
+  let bs ← Vector.replicate 8 0 |>.mapM (λ _ => readByte)
+  let u : UInt64 := bs[0].toUInt64
+                      ||| (bs[1].toUInt64 <<< 8)
+                      ||| (bs[2].toUInt64 <<< 16)
+                      ||| (bs[3].toUInt64 <<< 24)
+                      ||| (bs[4].toUInt64 <<< 32)
+                      ||| (bs[5].toUInt64 <<< 40)
+                      ||| (bs[6].toUInt64 <<< 48)
+                      ||| (bs[7].toUInt64 <<< 56)
+  return Float.ofBits u
+
+example : (readFloat64.run ⟨ByteArray.mk #[0, 0, 0, 0, 0, 0, 9, 64], 0⟩).map (·.1) = some 3.125 :=
+  by native_decide
+
+partial
+def parseExpr : Parser Expr := do
+  let tag ← readByte
+  match Fin.ofNat 8 tag.toNat with
+  | 1 =>
+    let val ← readFloat64
+    return .atom (.number val)
+  | 2 =>
+    return .atom (.string "Hello")
+  | 3 =>
+    return .atom .none
+  | 4 =>
+    let r ← readNat32
+    let c ← readNat32
+    return .ref ⟨r, c⟩
+  | 5 =>
+    let e1 ← parseExpr
+    let e2 ← parseExpr
+    return .add e1 e2
+  | 6 =>
+    let e1 ← parseExpr
+    let e2 ← parseExpr
+    return .sub e1 e2
+  | 7 =>
+    let e1 ← parseExpr
+    let e2 ← parseExpr
+    return .mult e1 e2
+  | 0 =>
+    let e1 ← parseExpr
+    let e2 ← parseExpr
+    return .div e1 e2
+
+partial
+def parseAndRun (grid : Grid) : Parser Grid := do
+  let c ← get
+  if c.pos ≥ c.data.size then
+    return grid
+  else
+    let op ← readByte
+    match Fin.ofNat 3 op.toNat with
+    | 1 =>
+      let r ← readNat32
+      let c ← readNat32
+      let ex ← parseExpr
+      parseAndRun (grid.set ⟨r, c⟩ ex)
+    | 2 =>
+      let r ← readNat32
+      let c ← readNat32
+      parseAndRun (grid.delete ⟨r, c⟩)
+    | 0 =>
+      parseAndRun grid.evaluate
+
+example : (
+  (parseAndRun Grid.nil).run
+  ⟨
+    ByteArray.mk
+      #[
+        1, -- Set ⟨2, 1⟩ (atom (number 3.125))
+        2, 0, 0, 0,
+        1, 0, 0, 0,
+        1, 0, 0, 0, 0, 0, 0, 9, 64,
+
+        1, -- Set ⟨2, 2⟩ (atom (number 8.0))
+        2, 0, 0, 0,
+        2, 0, 0, 0,
+        1, 0, 0, 0, 0, 0, 0, 32, 64,
+
+        1, -- Set ⟨3, 1⟩ (add (ref ⟨2, 1⟩) (ref ⟨2, 2⟩))
+        3, 0, 0, 0,
+        1, 0, 0, 0,
+        7, 4, 2, 0, 0, 0, 1, 0, 0, 0,
+           4, 2, 0, 0, 0, 2, 0, 0, 0,
+
+        3 -- Evaluate
+      ],
+    0
+  ⟩ |>.map (·.1)
+    |>.getD Grid.nil
+    |>.cells.getD ⟨3, 1⟩ 0) == .atom (.number 25) :=
+  by native_decide
