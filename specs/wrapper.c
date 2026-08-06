@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <lean/lean.h>
 #include <stddef.h>
 #include <string.h>
@@ -20,7 +21,7 @@ int init_spec(void) {
   return 0;
 }
 
-void run_lean(char const *input, size_t length, char **output) {
+void run_lean(uint8_t const *input, size_t length, char **output) {
   lean_object *arr = lean_alloc_sarray(1, length, length);
   uint8_t *bytes = lean_sarray_cptr(arr);
   memcpy(bytes, input, length);

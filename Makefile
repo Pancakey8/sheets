@@ -19,10 +19,10 @@ sheets: $(OBJS)
 spec: specs/lakefile.lean specs/Sheets.lean specs/wrapper.c
 	cd specs && lake build
 
-sheets_test: sheets_test.o | spec
+sheets_test: sheets.o sheets_test.o | spec
 	$(eval LDIRS := $(shell find specs/.lake/ -type f -name 'lib*.so' -exec dirname {} \; | xargs printf '-L%s '))
 	$(eval LIBS := $(shell find specs/.lake/ -type f -name 'lib*.so' | sed -E 's|.*/lib([^/]+)\.so|-l\1|'))
-	clang -o $@ $^ \
+	$(CXX) -o $@ $^ \
 		$(LDIRS) \
 		-Wl,--no-as-needed \
 		$(LIBS) \
