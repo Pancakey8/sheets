@@ -13,11 +13,11 @@ int init_spec(void) {
   lean_io_mark_end_initialization();
 
   if (!lean_io_result_is_error(res)) {
-    lean_dec_ref(res);
+    lean_dec(res);
     return -1;
   }
 
-  lean_dec_ref(res);
+  lean_dec(res);
   return 0;
 }
 

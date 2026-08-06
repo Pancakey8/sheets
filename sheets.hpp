@@ -18,7 +18,8 @@ struct CellId {
 enum class Error {
   DivByZero,
   TypeMismatch,
-  Cyclic
+  Cyclic,
+  InvalidNumber
 };
 
 struct None{};
@@ -28,6 +29,7 @@ struct Atomic {
   Variant data;
 
   std::optional<double> num_value() const;
+  Atomic canon() const;
   Atomic operator+(Atomic const &other) const;
   Atomic operator-(Atomic const &other) const;
   Atomic operator*(Atomic const &other) const;

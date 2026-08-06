@@ -17,7 +17,7 @@ extern "C" int init_spec(void);
 extern "C" void run_lean(uint8_t const *input, size_t length, char **output);
 
 struct Parser {
-  std::span<std::uint8_t> data;
+  std::span<std::uint8_t const> data;
   std::size_t pos;
 
   std::optional<std::uint8_t> read_byte() {
@@ -61,7 +61,7 @@ struct Parser {
     if (!tag)
       return {};
 
-    switch (*tag % 8) {
+    switch (*tag % 9) {
     case 1: {
       auto val = read_float64();
       if (!val)
@@ -105,6 +105,13 @@ struct Parser {
       return Expr{Mult{std::make_unique<Expr>(std::move(*e1)),
                        std::make_unique<Expr>(std::move(*e2))}};
     } break;
+    case 8: {
+      auto r = read_nat32();
+      auto c = read_nat32();
+      if (!(r && c))
+        return {};
+      return Expr{CellId{*r % 255, *c % 255}};
+    } break;
     case 0: {
       auto e1 = parse_expr();
       auto e2 = parse_expr();
@@ -123,7 +130,7 @@ struct Parser {
       auto op = read_byte();
       if (!op)
         return false;
-      switch (*op % 3) {
+      switch (*op % 5) {
       case 1: {
         auto r = read_nat32();
         auto c = read_nat32();
@@ -139,6 +146,21 @@ struct Parser {
           return false;
         grid.erase({*r, *c});
       } break;
+      case 3: {
+        auto r = read_nat32();
+        auto c = read_nat32();
+        auto ex = parse_expr();
+        if (!(r && c && ex))
+          return false;
+        grid.set({*r % 255, *c % 255}, std::move(*ex));
+      } break;
+      case 4: {
+        auto r = read_nat32();
+        auto c = read_nat32();
+        if (!(r && c))
+          return false;
+        grid.erase({*r % 255, *c % 255});
+      } break;
       case 0: {
         grid.evaluate();
       } break;
@@ -153,7 +175,10 @@ struct Parser {
 
 std::string atom_repr(Atomic const &a) {
   return std::visit(overload{
-                        [](double const &n) { return std::format("N:{}", n); },
+                        [](double const &n) {
+                          return std::format("N:{}",
+                                             std::bit_cast<std::uint64_t>(n));
+                        },
                         [](std::string const &s) {
                           std::stringstream ss;
                           ss << std::quoted(s);
@@ -168,6 +193,8 @@ std::string atom_repr(Atomic const &a) {
                             return std::string{"E:type"};
                           case Error::Cyclic:
                             return std::string{"E:cycle"};
+                          case Error::InvalidNumber:
+                            return std::string{"E:invNum"};
                           default:
                             std::unreachable();
                           }
@@ -190,7 +217,7 @@ std::string atom_grid_repr(std::map<CellId, Atomic> const &m) {
   return res;
 }
 
-std::string run_impl(std::span<std::uint8_t> inp) {
+std::string run_impl(std::span<std::uint8_t const> inp) {
   Grid g{};
   if (Parser{inp, 0}.parse_and_run(g)) {
     Evaluation ev{{}, g.cells};
@@ -201,35 +228,62 @@ std::string run_impl(std::span<std::uint8_t> inp) {
   }
 }
 
-int main(void) {
+extern "C" int LLVMFuzzerInitialize(int *, char ***) {
   init_spec();
-
-  uint8_t input[] = {
-      1, // Set ⟨2, 1⟩ (atom (number 3.125))
-      2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 9,  64,
-
-      1, // Set ⟨2, 2⟩ (atom (number 8.0))
-      2, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 32, 64,
-
-      1, // Set ⟨3, 1⟩ (add (ref ⟨2, 1⟩) (ref ⟨2, 2⟩))
-      3, 0, 0, 0, 1, 0, 0, 0, 7, 4, 2, 0, 0, 0, 1, 0,  0,
-      0, 4, 2, 0, 0, 0, 2, 0, 0, 0,
-
-      1,
-      3, 0, 0, 0, 2, 0, 0, 0, 2,
-
-      3 // Evaluate
-  };
-
-  char *out;
-  run_lean(input, sizeof(input), &out);
-  std::puts(out);
-
-  std::free(out);
-
-  auto s =
-      run_impl(std::span{static_cast<std::uint8_t *>(input), sizeof(input)});
-  std::println("{}", s);
-
   return 0;
 }
+
+extern "C" int LLVMFuzzerTestOneInput(uint8_t const *data, size_t size) {
+  if (size == 0)
+    return 0;
+
+  char *out_lean{};
+  run_lean(data, size, &out_lean);
+
+  std::string out_impl = run_impl(std::span{data, size});
+
+  std::string_view out_lean_sv{out_lean};
+
+  if (out_lean_sv != out_impl) {
+    std::println(stderr, "Discrepancy detected");
+    std::println(stderr, "Lean: {}", out_lean_sv);
+    std::println(stderr, "Impl: {}", out_impl);
+    std::free(out_lean);
+    std::abort();
+  }
+
+  std::free(out_lean);
+  return 0;
+}
+
+// int main(void) {
+//   init_spec();
+
+//   uint8_t input[] = {
+//       1, // Set ⟨2, 1⟩ (atom (number 3.125))
+//       2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 9,  64,
+
+//       1, // Set ⟨2, 2⟩ (atom (number 8.0))
+//       2, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 32, 64,
+
+//       1, // Set ⟨3, 1⟩ (add (ref ⟨2, 1⟩) (ref ⟨2, 2⟩))
+//       3, 0, 0, 0, 1, 0, 0, 0, 7, 4, 2, 0, 0, 0, 1, 0,  0,
+//       0, 4, 2, 0, 0, 0, 2, 0, 0, 0,
+
+//       1, 3, 0, 0, 0, 2, 0, 0, 0, 2,
+
+//       3 // Evaluate
+//   };
+
+//   char *out;
+//   run_lean(input, sizeof(input), &out);
+//   std::puts(out);
+
+//   std::free(out);
+
+//   auto s =
+//       run_impl(std::span{static_cast<std::uint8_t *>(input), sizeof(input)});
+//   std::println("{}", s);
+
+//   return 0;
+// }

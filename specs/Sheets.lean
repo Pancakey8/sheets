@@ -15,6 +15,7 @@ inductive Error
 | divByZero
 | typeMismatch
 | cyclic
+| invalidNumber
 deriving Repr, BEq
 
 inductive Atomic
@@ -70,13 +71,22 @@ def Atomic.numValue : Atomic -> Option Float
 | .none => .some 0
 | _ => .none
 
+def Atomic.canon : Atomic -> Atomic
+| .number x =>
+  if x.isNaN then
+    .error .invalidNumber
+  else
+    .number x
+| a => a
+
 def Atomic.binOp (f : Float -> Float -> Atomic) (a b : Atomic) : Atomic :=
   match a, b with
   | .error e, _ => .error e
   | _, .error e => .error e
   | _, _ =>
-    match a.numValue, b.numValue with
-    | .some x, .some y => f x y
+    match a.canon.numValue, b.canon.numValue with
+    | .some x, .some y =>
+      f x y
     | _, _ => .error .typeMismatch
 
 def Atomic.add (a b : Atomic) : Atomic := a.binOp (λ x y => .number (x + y)) b
@@ -131,7 +141,7 @@ def Evaluation.computeOne (ev : Evaluation) : Option (CellId × Atomic) :=
   | .some id =>
     .some (
       id,
-      (ev.remain.get id (Evaluation.findFree?_mem_some h)).evalWith ev.ctx
+      ((ev.remain.get id (Evaluation.findFree?_mem_some h)).evalWith ev.ctx).canon
     )
   | .none =>
     match ev.remain.minKey? with
@@ -380,7 +390,7 @@ example : (readFloat64.run ⟨ByteArray.mk #[0, 0, 0, 0, 0, 0, 9, 64], 0⟩).map
 partial
 def parseExpr : Parser Expr := do
   let tag ← readByte
-  match Fin.ofNat 8 tag.toNat with
+  match Fin.ofNat 9 tag.toNat with
   | 1 =>
     let val ← readFloat64
     return .atom (.number val)
@@ -404,6 +414,10 @@ def parseExpr : Parser Expr := do
     let e1 ← parseExpr
     let e2 ← parseExpr
     return .mult e1 e2
+  | 8 =>
+    let r ← readNat32
+    let c ← readNat32
+    return .ref ⟨r % 255, c % 255⟩
   | 0 =>
     let e1 ← parseExpr
     let e2 ← parseExpr
@@ -416,17 +430,31 @@ def parseAndRun (grid : Grid) : Parser Grid := do
     return grid
   else
     let op ← readByte
-    match Fin.ofNat 3 op.toNat with
+    match Fin.ofNat 5 op.toNat with
     | 1 =>
       let r ← readNat32
       let c ← readNat32
       let ex ← parseExpr
+      -- dbg_trace s!"ins {r},{c}={repr ex}"
       parseAndRun (grid.set ⟨r, c⟩ ex)
     | 2 =>
       let r ← readNat32
       let c ← readNat32
+      -- dbg_trace s!"del {r},{c}"
       parseAndRun (grid.delete ⟨r, c⟩)
+    | 3 =>
+      let r ← readNat32
+      let c ← readNat32
+      let ex ← parseExpr
+      -- dbg_trace s!"ins' {r % 255},{c % 255}={repr ex}"
+      parseAndRun (grid.set ⟨r % 255, c % 255⟩ ex)
+    | 4 =>
+      let r ← readNat32
+      let c ← readNat32
+      -- dbg_trace s!"del' {r % 255},{c % 255}"
+      parseAndRun (grid.delete ⟨r % 255, c % 255⟩)
     | 0 =>
+      -- dbg_trace s!"eval"
       parseAndRun grid.evaluate
 
 example : (
@@ -450,7 +478,7 @@ example : (
         7, 4, 2, 0, 0, 0, 1, 0, 0, 0,
            4, 2, 0, 0, 0, 2, 0, 0, 0,
 
-        3 -- Evaluate
+        5 -- Evaluate
       ],
     0
   ⟩ |>.map (·.1)
@@ -459,12 +487,13 @@ example : (
   by native_decide
 
 def atomRepr : Atomic -> String
-| .number n => s!"N:{n}"
+| .number n => s!"N:{Float.toBits n}"
 | .string s => s!"S:{repr s}"
 | .none => "Z"
 | .error .divByZero => "E:div0"
 | .error .typeMismatch => "E:type"
 | .error .cyclic => "E:cycle"
+| .error .invalidNumber => "E:invNum"
 
 def atomGridRepr (m : Std.TreeMap CellId Atomic) : String :=
   String.intercalate ";" $
@@ -486,3 +515,16 @@ def test (n : Nat) :=
 
 def test2 (x : Int) :=
   s!"hello, {x}"
+
+#eval (parseAndRun Grid.nil).run ⟨ByteArray.mk #[
+  0x01, 0x02, 0x00, 0x00, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+  0xff, 0xff, 0xff, 0xff, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9,
+  0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9,
+  0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9,
+  0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xe9,
+  0xe9, 0xe9, 0xe9, 0xe9, 0xe9, 0xff, 0xff, 0xff, 0x02, 0x00, 0x01, 0x00,
+  0xff, 0xff, 0xff, 0xff, 0xff, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b,
+  0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b,
+  0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b, 0x9b,
+  0x9b, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x5d
+], 0⟩ |>.getD (Grid.nil, ByteCursor.mk ByteArray.empty 0) |>.1.evaluate

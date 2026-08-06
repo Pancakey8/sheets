@@ -1,5 +1,6 @@
 #include "sheets.hpp"
 #include <algorithm>
+#include <cmath>
 #include <optional>
 #include <variant>
 
@@ -7,7 +8,7 @@ template <class... Ts> struct overload : Ts... {
   using Ts::operator()...;
 };
 
-void Grid::set(CellId cell, Expr &&ex) { cells.emplace(cell, std::move(ex)); }
+void Grid::set(CellId cell, Expr &&ex) { cells[cell] = std::move(ex); }
 
 void Grid::erase(CellId cell) { cells.erase(cell); }
 
@@ -31,6 +32,16 @@ std::optional<double> Atomic::num_value() const {
       data);
 }
 
+Atomic Atomic::canon() const {
+  if (std::holds_alternative<double>(data)) {
+    if (std::isnan(std::get<double>(data))) {
+      return {Error::InvalidNumber};
+    }
+  }
+
+  return *this;
+}
+
 Atomic Atomic::operator+(Atomic const &other) const {
   if (std::holds_alternative<Error>(data)) {
     return *this;
@@ -40,7 +51,9 @@ Atomic Atomic::operator+(Atomic const &other) const {
     return other;
   }
 
-  if (auto [me, them] = std::pair{num_value(), other.num_value()}; me && them) {
+  if (auto [me, them] =
+          std::pair{canon().num_value(), other.canon().num_value()};
+      me && them) {
     return {*me + *them};
   } else {
     return {Error::TypeMismatch};
@@ -56,7 +69,9 @@ Atomic Atomic::operator-(Atomic const &other) const {
     return other;
   }
 
-  if (auto [me, them] = std::pair{num_value(), other.num_value()}; me && them) {
+  if (auto [me, them] =
+          std::pair{canon().num_value(), other.canon().num_value()};
+      me && them) {
     return {*me - *them};
   } else {
     return {Error::TypeMismatch};
@@ -72,7 +87,9 @@ Atomic Atomic::operator*(Atomic const &other) const {
     return other;
   }
 
-  if (auto [me, them] = std::pair{num_value(), other.num_value()}; me && them) {
+  if (auto [me, them] =
+          std::pair{canon().num_value(), other.canon().num_value()};
+      me && them) {
     return {*me * *them};
   } else {
     return {Error::TypeMismatch};
@@ -88,7 +105,9 @@ Atomic Atomic::operator/(Atomic const &other) const {
     return other;
   }
 
-  if (auto [me, them] = std::pair{num_value(), other.num_value()}; me && them) {
+  if (auto [me, them] =
+          std::pair{canon().num_value(), other.canon().num_value()};
+      me && them) {
     if (them == 0)
       return {Error::DivByZero};
     return {*me / *them};
@@ -142,7 +161,7 @@ std::optional<CellId> Evaluation::find_free() const {
 
 std::optional<std::pair<CellId, Atomic>> Evaluation::compute_one() const {
   if (auto id = find_free(); id) {
-    return std::make_pair(*id, remain.at(*id).eval_with(ctx));
+    return std::make_pair(*id, remain.at(*id).eval_with(ctx).canon());
   } else {
     if (!remain.empty()) {
       return std::make_pair(remain.begin()->first, Atomic{Error::Cyclic});
@@ -171,4 +190,3 @@ void Grid::evaluate() {
     cells.emplace(k, Expr{v});
   }
 }
-

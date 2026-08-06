@@ -2,27 +2,22 @@ CXX ?= clang++
 
 CXXFLAGS += -std=c++23 -Wall -Wextra
 
-SRCS := sheets.cpp main.cpp
-OBJS := $(SRCS:%.cpp=%.o)
-
 LEAN_LDFLAGS := $(shell cd specs && lake env leanc --print-ldflags)
 LEAN_PREFIX := $(shell cd specs && lake env lean --print-prefix)
 
 all: sheets sheets_test
 
-%.o: %.cpp
-	$(CXX) $(CXXFLAGS) -c -o $@ $^
-
-sheets: $(OBJS)
-	$(CXX) -o $@ $^
+sheets: sheets.cpp main.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $^
 
 spec: specs/lakefile.lean specs/Sheets.lean specs/wrapper.c
 	cd specs && lake build
 
-sheets_test: sheets.o sheets_test.o | spec
+sheets_test: sheets.cpp sheets_test.cpp | spec
 	$(eval LDIRS := $(shell find specs/.lake/ -type f -name 'lib*.so' -exec dirname {} \; | xargs printf '-L%s '))
 	$(eval LIBS := $(shell find specs/.lake/ -type f -name 'lib*.so' | sed -E 's|.*/lib([^/]+)\.so|-l\1|'))
-	$(CXX) -o $@ $^ \
+	$(CXX) $(CXXFLAGS) -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer \
+		-o $@ $^ \
 		$(LDIRS) \
 		-Wl,--no-as-needed \
 		$(LIBS) \
