@@ -1,8 +1,8 @@
-#include <stdio.h>
-#include <stdlib.h>
+#include <cstdio>
+#include <cstdlib>
 
-extern int init_spec(void);
-extern void run_lean(char const *input, size_t length, char **output);
+extern "C" int init_spec(void);
+extern "C" void run_lean(char const *input, size_t length, char **output);
 
 int main(void) {
   init_spec();
@@ -29,9 +29,9 @@ int main(void) {
 
   char *out;
   run_lean(input, sizeof(input), &out);
-  puts(out);
+  std::puts(out);
 
-  free(out);
+  std::free(out);
 
   return 0;
 }
