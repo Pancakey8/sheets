@@ -457,3 +457,32 @@ example : (
     |>.getD Grid.nil
     |>.cells.getD ⟨3, 1⟩ 0) == .atom (.number 25) :=
   by native_decide
+
+def atomRepr : Atomic -> String
+| .number n => s!"N:{n}"
+| .string s => s!"S:{repr s}"
+| .none => "Z"
+| .error .divByZero => "E:div0"
+| .error .typeMismatch => "E:type"
+| .error .cyclic => "E:cycle"
+
+def atomGridRepr (m : Std.TreeMap CellId Atomic) : String :=
+  String.intercalate ";" $
+  m.toList.map λ (k, v) => s!"{k.1},{k.2}={atomRepr v}"
+
+@[export run_lean_intrin]
+def runInput (inp : ByteArray) : String :=
+  match (parseAndRun Grid.nil).run ⟨inp, 0⟩ with
+  | .some x =>
+    Evaluation.mk ⟨∅⟩ x.1.cells
+    |>.resolveAll.ctx.vals
+    |> atomGridRepr
+  | .none => "ERROR"
+
+#eval Evaluation.mk ⟨∅⟩ dummy.cells |>.resolveAll.ctx.vals |> atomGridRepr
+
+def test (n : Nat) :=
+  ByteArray.mk #[n.toUInt8]
+
+def test2 (x : Int) :=
+  s!"hello, {x}"
