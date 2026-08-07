@@ -8,7 +8,7 @@ LEAN_PREFIX := $(shell cd specs && lake env lean --print-prefix)
 all: sheets sheets_test
 
 sheets: sheets.cpp main.cpp
-	$(CXX) $(CXXFLAGS) -o $@ $^
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lreadline
 
 spec: specs/lakefile.lean specs/Sheets.lean specs/wrapper.c
 	cd specs && lake build
