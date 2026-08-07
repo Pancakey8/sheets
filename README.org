@@ -1,1 +1,47 @@
 * Sheets
+
+Small spreadsheet engine written in C++ and specified in Lean4
+
+** Usage
+
+Cells use Excel format, using letters for columns followed by the
+number of the row.
+
+Numbers (e.g. ~3.14~), strings (e.g. ~"Hello"~), and basic arithmetic
+are defined (~+~, ~-~, ~*~, ~/~).
+
+Commands:
+
+| ~<cell> := <expr>~ | Assign an expression to a cell (e.g. ~A1 := A2 + B1 * 2~) |
+| ~delete <cell>~    | Delete expression at cell (e.g. ~delete A1~)              |
+| ~list~             | List occupied cells, expressions, and evaluation results  |
+
+** Building the tool
+
+Depends on a C++ compiler with the C++23 standard available, GNU
+readline, and GNU make.
+
+Build with ~make sheets~.
+
+** Building and running the tests
+
+Tests additionally require a valid Lean4 toolchain with Lake
+available. Install through [[https://github.com/leanprover/elan][Elan]] if unsure.
+
+Build the test utility with ~CXX=clang++ make sheets_test~. Initial
+build of specification might take a while due to Mathlib
+dependencies. Ensure that the build is done with ~clang++~ as the test
+uses libFuzzer from LLVM.
+
+Before running the utility, create a ~corpus/~ directory and copy
+~seeds/~ into it. Ensure your ~LD_LIBRARY_PATH~ is set correctly to
+find the specification library, running ~eval $(make env)~ can set
+this variable.
+
+Run the utility with ~./sheets_test corpus/ -max_len=8192 -jobs=4 -workers=4~.
+This will fuzz the implementation against the Lean4 specification.
+
+Once the fuzzer slows down on new coverage (generally 5 to 10
+minutes), verify coverage reports with ~make cov~. Note that the
+specification only covers the spreadsheet engine and not the CLI.
+

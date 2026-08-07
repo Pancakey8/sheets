@@ -226,6 +226,20 @@ struct Parser {
   }
 
   std::optional<Expr> parse_factor() {
+    if (current.kind == Token::Kind::Minus) {
+      advance();
+      auto right = parse_factor();
+      if (!right)
+        return std::nullopt;
+
+      Expr zero_expr{.data = Atomic{0.0}};
+
+      Expr parent;
+      parent.data = Sub{std::make_shared<Expr>(zero_expr),
+                        std::make_shared<Expr>(*right)};
+      return parent;      
+    }
+
     if (current.kind == Token::Kind::Number) {
       Atomic a;
       a.data = current.num;
@@ -327,6 +341,7 @@ int main() {
 
     if (input == "help") {
       std::println("Commands:");
+      std::println("  help               Shows this message");
       std::println("  <cell> := <expr>   Assign an expression to a cell (e.g. A1 := A2 + B1 * 2)");
       std::println("  delete <cell>      Delete expression at cell (e.g. delete A1)");
       std::println("  list               List occupied cells, expressions, and evaluation results");
