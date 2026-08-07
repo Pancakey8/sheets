@@ -110,7 +110,7 @@ struct Parser {
       auto c = read_nat32();
       if (!(r && c))
         return {};
-      return Expr{CellId{*r % 255, *c % 255}};
+      return Expr{CellId{*r % 64, *c % 64}};
     } break;
     case 0: {
       auto e1 = parse_expr();
@@ -152,14 +152,14 @@ struct Parser {
         auto ex = parse_expr();
         if (!(r && c && ex))
           return false;
-        grid.set({*r % 255, *c % 255}, std::move(*ex));
+        grid.set({*r % 64, *c % 64}, std::move(*ex));
       } break;
       case 4: {
         auto r = read_nat32();
         auto c = read_nat32();
         if (!(r && c))
           return false;
-        grid.erase({*r % 255, *c % 255});
+        grid.erase({*r % 64, *c % 64});
       } break;
       case 0: {
         grid.evaluate();

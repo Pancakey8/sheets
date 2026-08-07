@@ -417,7 +417,7 @@ def parseExpr : Parser Expr := do
   | 8 =>
     let r ← readNat32
     let c ← readNat32
-    return .ref ⟨r % 255, c % 255⟩
+    return .ref ⟨r % 64, c % 64⟩
   | 0 =>
     let e1 ← parseExpr
     let e2 ← parseExpr
@@ -446,13 +446,13 @@ def parseAndRun (grid : Grid) : Parser Grid := do
       let r ← readNat32
       let c ← readNat32
       let ex ← parseExpr
-      -- dbg_trace s!"ins' {r % 255},{c % 255}={repr ex}"
-      parseAndRun (grid.set ⟨r % 255, c % 255⟩ ex)
+      -- dbg_trace s!"ins' {r % 64},{c % 64}={repr ex}"
+      parseAndRun (grid.set ⟨r % 64, c % 64⟩ ex)
     | 4 =>
       let r ← readNat32
       let c ← readNat32
-      -- dbg_trace s!"del' {r % 255},{c % 255}"
-      parseAndRun (grid.delete ⟨r % 255, c % 255⟩)
+      -- dbg_trace s!"del' {r % 64},{c % 64}"
+      parseAndRun (grid.delete ⟨r % 64, c % 64⟩)
     | 0 =>
       -- dbg_trace s!"eval"
       parseAndRun grid.evaluate

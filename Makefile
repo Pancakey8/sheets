@@ -23,6 +23,12 @@ sheets_test: sheets.cpp sheets_test.cpp | spec
 		$(LIBS) \
 		$(LEAN_LDFLAGS)
 
+cov:
+	$(MAKE) sheets_test CXXFLAGS="$(CXXFLAGS) -fprofile-instr-generate -fcoverage-mapping"
+	eval $$($(make) env) && LLVM_PROFILE_FILE="sheets_test.profraw" ./sheets_test corpus/ -runs=10000 || true
+	llvm-profdata merge -sparse sheets_test.profraw -o sheets_test.profdata
+	llvm-cov show ./sheets_test -instr-profile=sheets_test.profdata sheets.cpp -format=html -output-dir=coverage_html
+
 env:
 	$(eval LPATH := $(shell find specs/.lake/ -type f -name 'lib*.so' -exec dirname {} \; | paste -sd:):$(LEAN_PREFIX)/lib/lean)
 	@echo export LD_LIBRARY_PATH="$(LPATH)"
