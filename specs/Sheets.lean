@@ -11,6 +11,11 @@ abbrev CellId := Nat ×ₗ Nat
 deriving instance Repr for CellId
 deriving instance DecidableEq for CellId
 
+instance : Std.LawfulEqCmp (α := CellId) compare where
+  eq_of_compare := by
+    intro a b h
+    exact compare_eq_iff_eq.mp h
+
 inductive Error
 | divByZero
 | typeMismatch
@@ -37,6 +42,7 @@ deriving Repr, BEq
 instance : Zero Expr where
   zero := .atom (.string "")
 
+@[ext]
 structure Grid where
   cells : Std.TreeMap CellId Expr
 deriving Repr
@@ -344,6 +350,299 @@ theorem Grid.evaluate_keys (grid : Grid) :
   exact h_dom
 
 #eval Grid.evaluate dummy
+
+theorem Atomic.canon_idempotent (a : Atomic) : a.canon.canon = a.canon := by
+  cases a
+  . dsimp [Atomic.canon]
+    rename_i x
+    cases h : x.isNaN
+    . simp [h]
+    . rfl
+  . rfl
+  . rfl
+  . rfl
+
+theorem Expr.evalWith_atom (ctx : Context) (a : Atomic) :
+    (Expr.atom a).evalWith ctx = a := rfl
+
+theorem Expr.isFree_atom (a : Atomic) (ctx : Context) :
+    (Expr.atom a).isFree ctx = true := by
+  dsimp [Expr.isFree, Expr.deps]
+  rfl
+
+theorem Grid.ext_get? {g1 g2 : Grid} 
+    (h : ∀ id, g1.cells.get? id = g2.cells.get? id) : g1 = g2 := by sorry
+
+theorem Grid.evaluate_cells (grid : Grid) (id : CellId) (h_mem : id ∈ grid.cells) :
+    ∃ a, grid.evaluate.cells[id]? = Expr.atom a := by
+  have h_mem' := (Grid.evaluate_keys ..).mp h_mem
+  simp [h_mem']
+  dsimp [Grid.evaluate]
+  simp [Std.TreeMap.getElem_map (h' := h_mem')]
+
+theorem Evaluation.computeOne_snd_canon
+    {ev : Evaluation} {c : CellId × Atomic}
+    (hc : ev.computeOne = some c) : c.2 = c.2.canon := by
+  dsimp [Evaluation.computeOne] at hc
+  split at hc
+  · rename_i id h_id
+    injection hc with h_eq
+    rw [← h_eq]
+    dsimp
+    exact (Atomic.canon_idempotent _).symm
+  · rename_i h_none
+    split at hc
+    · rename_i x id h_id
+      injection hc with h_eq
+      rw [← h_eq]
+      rfl
+    · contradiction
+
+theorem Evaluation.resolveAll_vals_canon
+    (ev : Evaluation)
+    (h_canon : ∀ id a, ev.ctx.vals.get? id = some a → a = a.canon) :
+    ∀ id a, ev.resolveAll.ctx.vals.get? id = some a → a = a.canon := by
+  unfold Evaluation.resolveAll
+  cases hc : ev.computeOne with
+  | none =>
+    intro id a ha
+    exact h_canon id a ha
+  | some c =>
+    have h_mem := Evaluation.computeOne_mem_some hc
+    have h_canon' :
+        ∀ id a, (ev.step c).ctx.vals.get? id = some a → a = a.canon := by
+      intro id a ha
+      dsimp [Evaluation.step] at ha
+      rw [Std.TreeMap.getElem?_insert] at ha
+      by_cases h : id = c.1
+      . subst h
+        simp at ha
+        subst ha -- Here
+        exact Evaluation.computeOne_snd_canon hc
+      . have h' : ¬compare c.1 id = Ordering.eq := by
+           simp
+           exact mt Eq.symm h
+        simp [h'] at ha
+        exact h_canon id a ha
+
+    exact Evaluation.resolveAll_vals_canon (ev.step c) h_canon'
+termination_by ev.remain.size
+decreasing_by
+  dsimp [Evaluation.step]
+  rw [Std.TreeMap.size_erase]
+  simp [h_mem]
+  have h_pos := size_gt_zero_if_mem ev.remain h_mem
+  exact Nat.sub_one_lt_of_lt h_pos
+
+theorem Evaluation.resolveAll_ctx_get?
+    (ev : Evaluation) (id : CellId) (v : Atomic)
+    (h_not_rem : id ∉ ev.remain)
+    (h_ctx : ev.ctx.vals.get? id = some v) :
+    ev.resolveAll.ctx.vals.get? id = some v := by
+  unfold Evaluation.resolveAll
+  cases hc : ev.computeOne with
+  | none => exact h_ctx
+  | some c =>
+    have h_mem := Evaluation.computeOne_mem_some hc
+    have h_ne : c.1 ≠ id := by
+      rintro rfl
+      exact h_not_rem h_mem
+    have h_not_rem' : id ∉ (ev.step c).remain := by
+      dsimp [Evaluation.step]
+      rw [Std.TreeMap.mem_erase]
+      intro h
+      exact h_not_rem h.2
+    have h_ctx' : (ev.step c).ctx.vals.get? id = some v := by
+      dsimp [Evaluation.step]
+      rw [Std.TreeMap.getElem?_insert]
+      have h_cmp : compare c.1 id ≠ Ordering.eq := by
+        intro h_eq
+        exact h_ne (compare_eq_iff_eq.mp h_eq)
+      simp [h_cmp]
+      exact h_ctx
+    exact Evaluation.resolveAll_ctx_get? (ev.step c) id v h_not_rem' h_ctx'
+termination_by ev.remain.size
+decreasing_by
+  dsimp [Evaluation.step]
+  have h_mem := Evaluation.computeOne_mem_some hc
+  rw [Std.TreeMap.size_erase]
+  simp [h_mem]
+  have h_pos := size_gt_zero_if_mem ev.remain h_mem
+  exact Nat.sub_one_lt_of_lt h_pos
+
+theorem Evaluation.resolveAll_ctx_vals_get?
+    (ev : Evaluation) (h_disj : ev.DisjointKeys) (id : CellId) (a : Atomic)
+    (h_ctx : ev.ctx.vals.get? id = some a) :
+    ev.resolveAll.ctx.vals.get? id = some a := by
+  unfold Evaluation.resolveAll
+  cases hc : ev.computeOne with
+  | none => exact h_ctx
+  | some c =>
+    have h_mem := Evaluation.computeOne_mem_some hc
+    have h_step : (ev.step c).ctx.vals.get? id = some a := by
+      dsimp [Evaluation.step]
+      rw [Std.TreeMap.getElem?_insert]
+      by_cases h : id = c.1
+      · subst h
+        simp
+        obtain ⟨h_ctx_mem, h_eq⟩ := Std.TreeMap.getElem?_eq_some_iff.mp h_ctx
+        have h_absurd := h_disj c.1 ⟨h_ctx_mem, h_mem⟩
+        contradiction
+      · have h_cmp : compare c.1 id ≠ Ordering.eq := by
+          simp_all only [Std.TreeMap.get?_eq_getElem?, ne_eq, Std.LawfulEqCmp.compare_eq_iff_eq]
+          obtain ⟨fst, snd⟩ := c
+          simp_all only
+          apply Aesop.BuiltinRules.not_intro
+          intro a_1
+          subst a_1
+          simp_all only [not_true_eq_false]
+        simp [h_cmp]
+        exact h_ctx
+    exact Evaluation.resolveAll_ctx_vals_get? (ev.step c) (ev.disjoint_step h_disj) id a h_step
+termination_by ev.remain.size
+decreasing_by
+  dsimp [Evaluation.step]
+  have h_mem := Evaluation.computeOne_mem_some hc
+  rw [Std.TreeMap.size_erase]
+  simp [h_mem]
+  have h_pos := size_gt_zero_if_mem ev.remain h_mem
+  exact Nat.sub_one_lt_of_lt h_pos
+
+theorem Evaluation.resolveAll_get?_atom
+    (ev : Evaluation) (h_disj : DisjointKeys ev) (id : CellId) (a : Atomic)
+    (h_rem : ev.remain.get? id = some (Expr.atom a)) :
+    ev.resolveAll.ctx.vals.get? id = some a.canon := by
+  unfold Evaluation.resolveAll
+  cases hc : ev.computeOne with
+  | none =>
+    dsimp [Evaluation.computeOne] at hc
+    split at hc
+    · contradiction
+    · rename_i h_none
+      split at hc
+      · contradiction
+      · rename_i h_min
+        have h_empty := Std.TreeMap.minKey?_eq_none_iff.mp h_min
+        obtain ⟨h_mem, _⟩ := Std.TreeMap.getElem?_eq_some_iff.mp h_rem
+        have h_not := Std.TreeMap.not_mem_of_isEmpty (a := id) h_empty
+        exact absurd h_mem h_not
+  | some c =>
+    by_cases h_eq : c.1 = id
+    · subst h_eq
+      have h_c2 : c.2 = a.canon := by
+        dsimp [Evaluation.computeOne] at hc
+        split at hc
+        · rename_i id_free h_free
+          injection hc with h_tuple
+          rw [← h_tuple]
+          dsimp
+          have : id_free = c.1 := by
+            subst h_tuple
+            rfl
+          subst this
+          obtain ⟨h_mem, h_elem⟩ := Std.TreeMap.getElem?_eq_some_iff.mp h_rem
+          rw [h_elem, Expr.evalWith_atom]
+        · rename_i h_none
+          split at hc
+          · rename_i x id_min h_min
+            injection hc with h_tuple
+            rw [← h_tuple]
+            dsimp
+            have : id_min = c.1 := by
+              subst h_tuple
+              rfl
+            subst this
+            obtain ⟨h_mem, h_elem⟩ := Std.TreeMap.getElem?_eq_some_iff.mp h_rem
+            exfalso
+            have h_free : (Expr.atom a).isFree ev.ctx = true := Expr.isFree_atom a ev.ctx
+            have h_filt_mem : c.1 ∈ Std.TreeMap.filter (λ _ ex => ex.isFree ev.ctx) ev.remain := by
+              rw [Std.TreeMap.mem_filter]
+              refine ⟨h_mem, ?_⟩
+              rw [h_elem]
+              exact h_free
+            have h_min_ne : (Std.TreeMap.filter (λ _ ex => ex.isFree ev.ctx) ev.remain).minKey? ≠ none := by
+              intro h_empty_min
+              have h_empty := Std.TreeMap.minKey?_eq_none_iff.mp h_empty_min
+              have h_not := Std.TreeMap.not_mem_of_isEmpty (a := c.1) h_empty
+              exact h_not h_filt_mem
+            dsimp [Evaluation.findFree?] at h_none
+            exact absurd h_none h_min_ne
+          · contradiction
+      simp [← h_c2]
+      have h_step_inserted : (ev.step c).ctx.vals.get? c.1 = some c.2 := by
+        dsimp [Evaluation.step]
+        rw [Std.TreeMap.getElem?_insert]
+        simp
+      exact Evaluation.resolveAll_ctx_vals_get? (ev.step c) (ev.disjoint_step h_disj) c.1 c.2 h_step_inserted
+    · have h_rem' : (ev.step c).remain.get? id = some (Expr.atom a) := by
+        dsimp [Evaluation.step]
+        rw [Std.TreeMap.getElem?_erase]
+        have h_cmp : compare c.1 id ≠ Ordering.eq := by
+          intro h_c
+          exact h_eq (compare_eq_iff_eq.mp h_c)
+        simp [h_cmp]
+        exact h_rem
+      exact Evaluation.resolveAll_get?_atom (ev.step c) (ev.disjoint_step h_disj) id a h_rem'
+termination_by ev.remain.size
+decreasing_by
+  dsimp [Evaluation.step]
+  have h_mem := Evaluation.computeOne_mem_some hc
+  rw [Std.TreeMap.size_erase]
+  simp [h_mem]
+  have h_pos := size_gt_zero_if_mem ev.remain h_mem
+  exact Nat.sub_one_lt_of_lt h_pos
+
+theorem Grid.evaluate_get?_eq_canon
+    (grid : Grid) (id : CellId) (a : Atomic)
+    (ha : grid.cells.get? id = some (Expr.atom a)) :
+    grid.evaluate.cells.get? id = some (Expr.atom a.canon) := by
+  let ev0 : Evaluation := ⟨⟨∅⟩, grid.cells⟩
+  have disj : ev0.DisjointKeys := by
+    intro x ⟨h_ctx, _⟩
+    dsimp [ev0] at h_ctx
+    contradiction
+  have h_res := Evaluation.resolveAll_get?_atom ev0 disj id a ha
+  dsimp [Grid.evaluate]
+  rw [Std.TreeMap.getElem?_map]
+  simp
+  exact h_res
+
+theorem Grid.evaluate_cell_is_canon (grid : Grid) (id : CellId) (a : Atomic)
+    (ha : grid.evaluate.cells.get? id = some (Expr.atom a)) : 
+    a = a.canon := by
+  have hcanon :
+      ∀ id a,
+        (Evaluation.mk ⟨∅⟩ grid.cells).resolveAll.ctx.vals.get? id = some a →
+          a = a.canon := by
+    apply Evaluation.resolveAll_vals_canon
+    intro id a h
+    simp at h
+
+  dsimp [Grid.evaluate] at ha
+  rw [Std.TreeMap.getElem?_map] at ha
+  have hval :
+      (Evaluation.mk ⟨∅⟩ grid.cells).resolveAll.ctx.vals[id]? =
+        some a := by
+    simpa using ha
+  exact hcanon id a hval
+
+theorem Grid.evaluate_idempotent (grid : Grid) :
+    grid.evaluate.evaluate = grid.evaluate := by
+  apply Grid.ext_get?
+  intro id
+  by_cases h_mem : id ∈ grid.cells
+  ·
+    have h_mem1 := (Grid.evaluate_keys ..).mp h_mem
+    rcases Grid.evaluate_cells grid id h_mem with ⟨a, ha⟩
+    have h_eval2 := Grid.evaluate_get?_eq_canon grid.evaluate id a ha
+    have ha_canon : a = a.canon := Grid.evaluate_cell_is_canon grid id a ha
+    rw [← ha_canon] at h_eval2
+    simp [ha]
+    exact h_eval2
+  ·
+    have h_not1 : id ∉ grid.evaluate.cells := mt (Grid.evaluate_keys ..).mpr h_mem
+    have h_not2 : id ∉ grid.evaluate.evaluate.cells := mt (Grid.evaluate_keys ..).mpr h_not1
+    simp [Std.TreeMap.getElem?_eq_none h_not1, Std.TreeMap.getElem?_eq_none h_not2]
 
 deriving instance Repr for ByteArray
 
